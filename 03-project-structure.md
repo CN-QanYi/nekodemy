@@ -120,8 +120,11 @@ utils/
 frontend/
 ├── packages/                   # 前端包
 │   ├── common/                 # 公共模块
-│   ├── components/             # React 组件
-│   └── request/                # 请求客户端
+│   ├── components/             # React 组件库
+│   ├── request/                # 请求客户端（含测试）
+│   │   ├── __tests__/          # 单元测试
+│   │   └── coverage/           # 测试覆盖率报告
+│   └── web-bridge/             # 桥接层（暴露组件到 window）
 ├── src/                        # 源码
 │   └── web/                    # Web 应用入口
 ├── scripts/                    # 构建脚本
@@ -330,13 +333,15 @@ specs/
 位于 `frontend/` 目录，基于 TypeScript + React 的前端架构：
 
 - **packages/**：模块化包结构
-  - **common/**：公共模块
-  - **components/**：React 组件库
-  - **request/**：请求客户端（支持 Web 和 Native）
+  - **common/**：公共模块（类型定义、工具函数）
+  - **components/**：React 组件库（Button、StatusToast、Modal 等）
+  - **request/**：请求客户端（支持 Web 和 Native，含单元测试）
+  - **web-bridge/**：桥接层（将组件和请求能力暴露到 window）
 - **src/web/**：Web 应用入口
 - **scripts/**：构建和打包脚本
 - **vendor/**：第三方库（React 等）
 - 支持组件独立打包和 UMD 格式
+- 使用 Vitest 进行单元测试
 
 ### 7. Utils 模块（工具函数）
 
@@ -445,7 +450,10 @@ brain/s2_5/ 或 brain/s3/ (智能体实现)
 1. **TypeScript + React 应用**：`frontend/`
    - 添加新组件：`frontend/packages/components/src/`
    - 添加公共模块：`frontend/packages/common/`
+   - 修改请求客户端：`frontend/packages/request/`
+   - 修改桥接层：`frontend/packages/web-bridge/`
    - 修改 Web 应用：`frontend/src/web/`
+   - 运行测试：`cd frontend/packages/request && npm test`
 
 2. **传统前端**：`static/` 和 `templates/`
    - 修改 HTML：`templates/`

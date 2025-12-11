@@ -14,7 +14,9 @@
 - [传统前端开发](#传统前端开发)
 - [组件开发指南](#组件开发指南)
 - [API 集成](#api-集成)
+- [桥接层使用](#桥接层使用)
 - [样式和 UI](#样式和-ui)
+- [测试](#测试)
 - [构建和部署](#构建和部署)
 - [调试技巧](#调试技巧)
 
@@ -46,6 +48,7 @@ Project N.E.K.O. 项目采用**混合架构**：
 - **构建工具**：Vite 7.1.7
 - **语言**：TypeScript 5.9.2
 - **HTTP 客户端**：Axios 1.13.2
+- **测试框架**：Vitest 2.1.3（含 coverage-v8）
 - **包管理**：npm workspaces
 
 ### 项目结构
@@ -55,30 +58,56 @@ frontend/
 ├── src/
 │   ├── web/              # SPA 应用入口
 │   │   ├── main.tsx      # React 挂载点
-│   │   ├── App.tsx        # 主应用组件
-│   │   └── styles.css     # 全局样式
-│   └── types/             # TypeScript 类型定义
-├── packages/              # npm workspaces 子包
-│   ├── components/        # UI 组件库
+│   │   ├── App.tsx       # 主应用组件
+│   │   └── styles.css    # 全局样式
+│   └── types/            # TypeScript 类型定义
+├── packages/             # npm workspaces 子包
+│   ├── components/       # UI 组件库
 │   │   ├── src/
 │   │   │   ├── Button.tsx
-│   │   │   └── Button.css
-│   │   └── index.ts       # 组件导出入口
-│   ├── request/           # HTTP 请求库（Axios 封装）
+│   │   │   ├── Button.css
+│   │   │   ├── StatusToast.tsx
+│   │   │   ├── StatusToast.css
+│   │   │   └── Modal/          # 模态框组件
+│   │   │       ├── BaseModal.tsx
+│   │   │       ├── AlertDialog.tsx
+│   │   │       ├── ConfirmDialog.tsx
+│   │   │       ├── PromptDialog.tsx
+│   │   │       └── index.tsx
+│   │   └── index.ts      # 组件导出入口
+│   ├── request/          # HTTP 请求库（Axios 封装）
+│   │   ├── __tests__/    # 单元测试
+│   │   │   ├── requestClient.test.ts
+│   │   │   ├── entrypoints.test.ts
+│   │   │   └── nativeStorage.test.ts
+│   │   ├── coverage/     # 测试覆盖率报告
 │   │   ├── createClient.ts
-│   │   ├── index.web.ts   # Web 端入口（默认实例）
+│   │   ├── index.ts      # 通用入口
+│   │   ├── index.web.ts  # Web 端入口（默认实例）
+│   │   ├── index.native.ts # React Native 入口
 │   │   └── src/
 │   │       ├── request-client/  # 请求客户端核心
+│   │       │   ├── requestQueue.ts  # 请求队列管理
+│   │       │   ├── tokenStorage.ts  # Token 存储实现
+│   │       │   └── types.ts         # 类型定义
 │   │       └── storage/          # 存储抽象层
-│   └── common/             # 公共工具与类型
+│   │           ├── webStorage.ts     # localStorage 封装
+│   │           ├── nativeStorage.ts  # AsyncStorage 封装
+│   │           └── types.ts          # Storage 接口
+│   ├── web-bridge/       # 桥接层（将组件与请求能力暴露到 window）
+│   │   ├── src/
+│   │   │   ├── index.ts  # 桥接函数
+│   │   │   └── global.ts # 全局类型声明
+│   │   └── vite.config.ts
+│   └── common/           # 公共工具与类型
 │       └── index.ts
-├── scripts/               # 构建辅助脚本
-├── vendor/                # 第三方库源文件
-│   └── react/             # React/ReactDOM UMD 文件
-├── index.html             # 开发环境 HTML 模板
-├── vite.web.config.ts     # Web 应用 Vite 配置
-├── tsconfig.json          # TypeScript 配置
-└── package.json           # 工作区根配置
+├── scripts/              # 构建辅助脚本
+├── vendor/               # 第三方库源文件
+│   └── react/            # React/ReactDOM UMD 文件
+├── index.html            # 开发环境 HTML 模板
+├── vite.web.config.ts    # Web 应用 Vite 配置
+├── tsconfig.json         # TypeScript 配置
+└── package.json          # 工作区根配置
 ```
 
 ### 环境要求
@@ -292,7 +321,7 @@ if (window.live2dModel) {
 
 <script type="module">
   // 使用全局变量访问组件
-  const { Button } = NEKOComponents;
+  const { Button } = ProjectNekoComponents;
   const { createRoot } = ReactDOM;
 
   // 挂载组件
@@ -431,10 +460,35 @@ export { Counter } from "./src/Counter";
 
 N.E.K.O 项目提供了基于 Axios 封装的请求库，支持：
 
-- **请求队列**：自动管理并发请求
-- **Token 管理**：自动存储和刷新访问令牌
+- **请求队列**：自动管理并发请求，Token 刷新期间暂存新请求
+- **Token 管理**：自动存储和刷新访问令牌，支持 401 自动刷新
 - **平台适配**：支持 Web（localStorage）和 React Native（AsyncStorage）
-- **错误处理**：统一的错误处理机制
+- **错误处理**：统一的错误处理机制，支持自定义错误处理器
+- **请求日志**：可配置的请求/响应日志，开发环境自动启用
+
+#### 配置选项
+
+`createRequestClient(options)` 支持以下配置：
+
+| 选项 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `baseURL` | `string` | ✅ | - | API 基础 URL |
+| `storage` | `TokenStorage` | ✅ | - | Token 存储实现 |
+| `refreshApi` | `TokenRefreshFn` | ✅ | - | Token 刷新函数 |
+| `timeout` | `number` | - | `15000` | 请求超时时间（毫秒） |
+| `requestInterceptor` | `Function` | - | - | 自定义请求拦截器 |
+| `responseInterceptor` | `Object` | - | - | 自定义响应拦截器 |
+| `returnDataOnly` | `boolean` | - | `true` | 是否只返回 `response.data` |
+| `errorHandler` | `Function` | - | - | 自定义错误处理器 |
+| `logEnabled` | `boolean` | - | auto | 是否启用请求日志 |
+
+#### 日志控制
+
+请求日志的启用优先级：
+1. `config.logEnabled`（配置项覆盖）
+2. `globalThis.NEKO_REQUEST_LOG_ENABLED`（全局变量）
+3. `import.meta.env.MODE`（构建模式，development 时启用）
+4. 默认关闭
 
 #### 在 React 组件中使用
 
@@ -482,7 +536,8 @@ const customRequest = createRequestClient({
       refreshToken: data.refresh_token
     };
   },
-  returnDataOnly: true  // 只返回 data，不返回完整 response
+  returnDataOnly: true,  // 只返回 data，不返回完整 response
+  logEnabled: true       // 强制启用日志（可选）
 });
 
 // 使用自定义实例
@@ -498,9 +553,9 @@ const data = await customRequest.get("/api/endpoint");
 <script src="/static/bundles/request.js"></script>
 <script>
   // 使用全局变量
-  const request = NEKORequest.createRequestClient({
+  const request = ProjectNekoRequest.createRequestClient({
     baseURL: "/api",
-    storage: new NEKORequest.WebTokenStorage(),
+    storage: new ProjectNekoRequest.WebTokenStorage(),
     returnDataOnly: true
   });
 
@@ -534,6 +589,99 @@ await request.put("/api/endpoint", { data: { key: "value" } });
 
 // DELETE 请求
 await request.delete("/api/endpoint");
+```
+
+---
+
+## 桥接层使用
+
+桥接层（`@project_neko/web-bridge`）将 React 组件和请求能力暴露到 `window` 对象，供非 React 代码使用。
+
+### 主要功能
+
+- **bindStatusToastToWindow()**：将 `StatusToast` 绑定到 `window.showStatusToast()`
+- **bindModalToWindow()**：将 `Modal` 绑定到 `window.showAlert()`、`window.showConfirm()`、`window.showPrompt()`
+- **bindRequestToWindow()**：将请求客户端绑定到 `window.request`，并提供 URL 构建工具
+- **autoBindDefaultRequest()**：自动绑定默认请求客户端（UMD 加载时自动执行）
+
+### 在 HTML 中使用桥接层
+
+```html
+<!-- 1. 引入请求库（不依赖 React，可先加载） -->
+<script src="/static/bundles/request.js"></script>
+
+<!-- 2. 引入桥接层（封装全局工具，自动绑定 window.request） -->
+<script src="/static/bundles/web-bridge.js"></script>
+
+<!-- 3. 引入 React/ReactDOM UMD（组件库依赖） -->
+<script src="/static/bundles/react.production.min.js"></script>
+<script src="/static/bundles/react-dom.production.min.js"></script>
+
+<!-- 4. 引入组件库样式 -->
+<link rel="stylesheet" href="/static/bundles/components.css">
+
+<!-- 5. 引入组件库 UMD -->
+<script src="/static/bundles/components.js"></script>
+```
+
+### 全局 API 使用
+
+#### 状态提示
+
+```javascript
+window.showStatusToast(message, duration);
+// 示例: window.showStatusToast("操作成功", 3000);
+```
+
+#### 模态对话框
+
+```javascript
+// Alert（警告框）
+await window.showAlert(message, title);
+
+// Confirm（确认框）
+const ok = await window.showConfirm(message, title, {
+  okText: "确定",
+  cancelText: "取消",
+  danger: false
+});
+
+// Prompt（输入框）
+const value = await window.showPrompt(message, defaultValue, title);
+```
+
+#### HTTP 请求
+
+```javascript
+// GET 请求
+const data = await window.request.get("/api/endpoint", { params: { key: value } });
+
+// POST 请求
+const result = await window.request.post("/api/endpoint", { body: data });
+
+// URL 构建
+const apiUrl = window.buildApiUrl("/api/endpoint");
+const staticUrl = window.buildStaticUrl("/static/resource.png");
+const wsUrl = window.buildWebSocketUrl("/ws/chat");
+```
+
+### 事件系统
+
+```javascript
+// 请求客户端就绪
+window.addEventListener('requestReady', () => {
+  console.log('window.request 已可用');
+});
+
+// 状态提示组件就绪
+window.addEventListener('statusToastReady', () => {
+  console.log('window.showStatusToast 已可用');
+});
+
+// Modal 组件就绪
+window.addEventListener('modalReady', () => {
+  console.log('window.showAlert/showConfirm/showPrompt 已可用');
+});
 ```
 
 ---
@@ -608,7 +756,97 @@ import "./styles.css";
 
 ---
 
+## 测试
+
+### 运行测试
+
+请求库包含完整的单元测试套件，使用 Vitest 编写：
+
+```bash
+# 运行请求库测试
+cd frontend/packages/request && npm test
+
+# 或在 frontend 目录下使用 workspace 命令
+cd frontend && npm run test -w @project_neko/request
+```
+
+### 测试覆盖率
+
+生成测试覆盖率报告：
+
+```bash
+cd frontend/packages/request && npx vitest run --coverage
+```
+
+覆盖率报告将生成到 `packages/request/coverage/` 目录。
+
+### 测试文件说明
+
+| 文件 | 描述 |
+|------|------|
+| `requestClient.test.ts` | 请求客户端核心功能测试（Token 刷新、请求队列、拦截器等） |
+| `entrypoints.test.ts` | 入口文件导出测试（index.ts、index.web.ts、index.native.ts） |
+| `nativeStorage.test.ts` | React Native 存储抽象测试 |
+
+### 编写测试
+
+使用 Vitest 编写测试：
+
+```typescript
+// packages/request/__tests__/myTest.test.ts
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { createRequestClient } from "../createClient";
+import type { TokenStorage } from "../src/request-client/types";
+
+// 创建内存存储用于测试
+const createMemoryStorage = (): TokenStorage => {
+  let accessToken: string | null = null;
+  let refreshToken: string | null = null;
+
+  return {
+    async getAccessToken() { return accessToken; },
+    async setAccessToken(token: string) { accessToken = token; },
+    async getRefreshToken() { return refreshToken; },
+    async setRefreshToken(token: string) { refreshToken = token; },
+    async clearTokens() { accessToken = null; refreshToken = null; }
+  };
+};
+
+describe("我的测试", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("应该正常工作", async () => {
+    const storage = createMemoryStorage();
+    const client = createRequestClient({
+      baseURL: "/api",
+      storage,
+      refreshApi: vi.fn()
+    });
+
+    expect(client).toBeDefined();
+  });
+});
+```
+
+---
+
 ## 构建和部署
+
+### 构建模式
+
+项目支持两种构建模式：
+
+- **开发构建** (`build:dev`)：用于本地开发和调试
+  - 启用请求日志
+  - 生成 sourcemap 便于调试
+  - 不压缩代码
+  
+- **生产构建** (`build:prod`)：用于生产环境部署
+  - 禁用请求日志
+  - 不生成 sourcemap（减小体积）
+  - 压缩代码
 
 ### 构建生产版本
 
@@ -617,6 +855,15 @@ import "./styles.css";
 ```bash
 cd frontend
 npm run build
+# 或
+npm run build:prod
+```
+
+执行开发构建：
+
+```bash
+cd frontend
+npm run build:dev
 ```
 
 构建流程依次执行：
@@ -625,41 +872,49 @@ npm run build
 2. **`build:request`**：构建请求库，产出 ES/UMD 双格式
 3. **`build:common`**：构建通用工具包，产出 ES/UMD 双格式
 4. **`build:components`**：构建组件库，产出 ES/UMD 双格式，外部化 `react`/`react-dom`
-5. **`build:web`**：构建 Web 应用入口，生成 `react_web.js`（ES 模块）
-6. **`copy:react-umd`**：复制 React UMD 文件到 `static/bundles`
+5. **`build:web-bridge`**：构建桥接层，产出 ES/UMD 双格式
+6. **`build:web`**：构建 Web 应用入口，生成 `react_web.js`（ES 模块）
+7. **`copy:react-umd`**：复制 React UMD 文件到 `static/bundles`
 
 ### 构建产物
 
 主要产物位于 `static/bundles/`（仓库根目录）：
 
-- **`react_web.js`**：SPA 入口（ESM 格式）
 - **`components.js`** / **`components.es.js`**：组件库（UMD/ES 格式）
 - **`components.css`**：组件库样式文件
 - **`common.js`** / **`common.es.js`**：通用工具（UMD/ES 格式）
 - **`request.js`** / **`request.es.js`**：请求库（UMD/ES 格式）
+- **`web-bridge.js`** / **`web-bridge.es.js`**：桥接层（UMD/ES 格式）
 - **`react.production.min.js`**：React 生产环境 UMD
 - **`react-dom.production.min.js`**：ReactDOM 生产环境 UMD
+
+**`dist/webapp/`**（frontend 目录下）：
+- **`react_web.js`**：SPA 入口（ESM 格式）
+- **`frontend.css`**：Web 应用样式文件
 
 ### 服务端集成
 
 在服务端模板中按以下顺序引用构建产物：
 
 ```html
-<!-- 1. 引入 React/ReactDOM UMD（组件库依赖） -->
+<!-- 1. 引入请求库（不依赖 React） -->
+<script src="/static/bundles/request.js"></script>
+
+<!-- 2. 引入桥接层（自动绑定 window.request） -->
+<script src="/static/bundles/web-bridge.js"></script>
+
+<!-- 3. 引入 React/ReactDOM UMD（组件库依赖） -->
 <script src="/static/bundles/react.production.min.js"></script>
 <script src="/static/bundles/react-dom.production.min.js"></script>
 
-<!-- 2. 引入组件库样式 -->
+<!-- 4. 引入组件库样式 -->
 <link rel="stylesheet" href="/static/bundles/components.css" />
 
-<!-- 3. 引入组件库 UMD（依赖全局 React/ReactDOM） -->
+<!-- 5. 引入组件库 UMD（依赖全局 React/ReactDOM） -->
 <script src="/static/bundles/components.js"></script>
-
-<!-- 4. 引入 SPA 入口（ES 模块） -->
-<script type="module" src="/static/bundles/react_web.js"></script>
 ```
 
-确保页面中存在 `<div id="root"></div>` 作为挂载点。
+确保页面中存在 `<div id="root"></div>` 作为挂载点（使用 SPA 时）。
 
 ### 单独构建
 
@@ -667,16 +922,24 @@ npm run build
 
 ```bash
 # 构建组件库
-npm run build:components
+npm run build:components       # 生产模式
+npm run build:components:dev   # 开发模式
 
 # 构建请求库
 npm run build:request
+npm run build:request:dev
 
 # 构建通用工具
 npm run build:common
+npm run build:common:dev
+
+# 构建桥接层
+npm run build:web-bridge
+npm run build:web-bridge:dev
 
 # 构建 Web 应用
 npm run build:web
+npm run build:web:dev
 ```
 
 ---
@@ -745,6 +1008,11 @@ Vite 提供了丰富的开发工具：
    - 检查浏览器控制台错误信息
    - 确认服务端模板中脚本引用顺序正确
    - 验证 `#root` 元素是否存在
+
+5. **测试失败**
+   - 确保在 `packages/request` 目录下运行测试
+   - 检查是否有未安装的开发依赖
+   - 查看测试输出中的具体错误信息
 
 ---
 
